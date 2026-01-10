@@ -7,6 +7,23 @@ from src.nom35_core import ensure_classified_layout
 from src.nom35_prepare import prepare_nom35_dataframe
 from src.nom35_report import build_site_report_tables
 
+from src.diagnostics import get_env_diagnostics
+
+# Diagnóstico de entorno (útil en Streamlit Cloud)
+with st.expander('Diagnóstico del entorno', expanded = False):
+    st.json(get_env_diagnostics())
+
+# Si falta openpyxl, no permitimos continuar con .xlsx (evita crash)
+try:
+    import openpyxl  # noqa: F401
+except Exception:
+    st.error(
+        'No está disponible la librería "openpyxl" en este entorno, por eso no se pueden leer archivos .xlsx. '
+        'Solución: en Streamlit Cloud ve a Manage app → Reboot (y si sigue igual, Clear cache) para que reinstale '
+        'requirements.txt. Alternativa temporal: sube los archivos en CSV.'
+    )
+
+
 
 VALID_TOKEN = 'drag0n.2026!'
 

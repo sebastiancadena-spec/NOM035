@@ -51,7 +51,7 @@ def load_single_file(uploaded_file, site_override: str | None = None) -> pd.Data
         raise ImportError(
             'No se pudo leer el archivo .xlsx porque falta la dependencia "openpyxl" '
             'en el entorno. En Streamlit Cloud se arregla asegurando que exista en '
-            'requirements.txt y (recomendado) fijando Python 3.11 con runtime.txt.'
+            'requirements.txt y reiniciando la app (Manage app → Reboot / Clear cache). Recomendado: fijar Python 3.11 con runtime.txt.'
         ) from e
 
     df = df.copy()
