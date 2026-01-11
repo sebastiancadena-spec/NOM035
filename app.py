@@ -88,16 +88,29 @@ with c1:
 with c2:
     antiguedad_step = st.number_input('Corte de antigüedad (meses, step)', min_value = 1, max_value = 60, value = 5, step = 1)
 
-if st.button('Continuar (procesar)'):
-    st.session_state['do_process'] = True
+if 'results_ready' not in st.session_state:
+    st.session_state['results_ready'] = False
 
-if not st.session_state.get('do_process', False):
+col_a, col_b = st.columns([1, 1])
+with col_a:
+    run_process = st.button('Procesar / Reprocesar')
+with col_b:
+    if st.button('Limpiar resultados'):
+        st.session_state['results_ready'] = False
+        st.session_state.pop('nom35_final', None)
+        st.rerun()
+
+if run_process:
+    st.session_state['results_ready'] = True
+
+
+if not st.session_state.get('results_ready', False):
     st.stop()
 
 with st.spinner('Procesando archivos...'):
     df_raw = load_many_files(uploaded_files, site_overrides = site_overrides)
 
-df_raw = ensure_classified_layout(df_raw)
+df_raw = df_raw = ensure_classified_layout(df_raw)
 
 nom35_final = prepare_nom35_dataframe(df_raw, edad_step = int(edad_step), antiguedad_step = int(antiguedad_step))
 

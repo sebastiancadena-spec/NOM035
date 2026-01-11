@@ -104,56 +104,47 @@ def _bin_numeric_series(series_in, step, start_value, no_spec_label = 'No especi
 
 
 def _build_age_bins(series_age, step = 5, no_spec_label = 'No especificado'):
+    """
+    Bins de edad:
+    - Siempre reserva 18-20
+    - Para step = 5: 21-25, 26-30, ...
+    - Para step != 5: usa bins desde 21 con tamaño = step: 21-(21+step-1), ...
+    Maneja NA y edades < 18 como 'No especificado'.
+    """
     age_num = pd.to_numeric(series_age, errors = 'coerce')
     age_num = age_num.where(age_num >= 0, other = pd.NA)
 
-    if step == 5:
-        s_max = age_num.max(skipna = True)
-        if pd.isna(s_max):
-            return pd.Series([no_spec_label] * len(series_age), index = series_age.index)
+    out = pd.Series([no_spec_label] * len(age_num), index = age_num.index)
 
-        max_val = int(s_max)
+    # 18-20
+    mask_18_20 = age_num.between(18, 20, inclusive = 'both')
+    out.loc[mask_18_20] = '18-20'
 
-        bins = [(18, 20)]
-        labels = ['18-20']
+    # mayores o iguales a 21
+    mask_21p = age_num >= 21
+    if not mask_21p.any():
+        return out
 
-        low = 21
-        high = 25
-        while low <= max_val:
-            bins.append((low, high))
-            labels.append(f'{low}-{high}')
-            low = high + 1
-            high = low + 4
+    step = int(step)
+    if step <= 0:
+        return out
 
-        def _assign(v):
-            if pd.isna(v):
-                return no_spec_label
+    # Definir bins desde 21
+    max_val = int(age_num[mask_21p].max(skipna = True))
 
-            try:
-                vv = int(float(v))
-            except Exception:
-                return no_spec_label
+    bins = []
+    labels = []
 
-            if vv < 18:
-                return no_spec_label
+    low = 21
+    high = low + step - 1
 
-            for (b_low, b_high), lab in zip(bins, labels):
-                if b_low <= vv <= b_high:
-                    return lab
+    while low <= max_val:
+        bins.append((low, high))
+        labels.append(f'{low}-{high}')
+        low = high + 1
+        high = low + step - 1
 
-            return labels[-1]
-
-        return age_num.map(_assign)
-
-    tail = _bin_numeric_series(
-        series_in = age_num,
-        step = int(step),
-        start_value = 21,
-        no_spec_label = no_spec_label,
-        min_value_allowed = 0,
-    )
-
-    def _merge(v):
+    def _assign(v):
         if pd.isna(v):
             return no_spec_label
 
@@ -162,16 +153,17 @@ def _build_age_bins(series_age, step = 5, no_spec_label = 'No especificado'):
         except Exception:
             return no_spec_label
 
-        if vv < 18:
+        if vv < 21:
             return no_spec_label
 
-        if 18 <= vv <= 20:
-            return '18-20'
+        for (b_low, b_high), lab in zip(bins, labels):
+            if b_low <= vv <= b_high:
+                return lab
 
-        return tail.loc[v.name]
+        return labels[-1]
 
-    return age_num.map(_merge)
-
+    out.loc[mask_21p] = age_num.loc[mask_21p].map(_assign)
+    return out
 
 def _normalize_sexo(series_in):
     sexo_series = series_in.map(_normalize_str_or_na)

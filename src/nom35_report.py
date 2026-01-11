@@ -354,12 +354,13 @@ def build_site_report_tables(
 
     if sites_filter is None:
         df_scope = df_in.copy()
-        include_general = True
     else:
         df_scope = df_in[df_in['site'].isin(sites_filter)].copy()
-        include_general = len(sites_filter) > 1
 
-    if sexo_filter is not None:
+    # GENERAL solo si hay más de un site REAL en el DF filtrado
+    n_sites = df_scope['site'].dropna().astype(str).nunique()
+    include_general = n_sites > 1
+if sexo_filter is not None:
         df_scope = df_scope[df_scope['sexo_norm'].isin(sexo_filter)].copy()
 
     if edad_filter is not None:
@@ -521,6 +522,9 @@ def build_site_report_tables(
     df_header = pd.DataFrame(headers)
     df_cat = pd.concat(cats, ignore_index = True) if cats else pd.DataFrame()
     df_dom = pd.concat(doms, ignore_index = True) if doms else pd.DataFrame()
+    df_cat = df_cat.drop(columns = ['categoria_clave'], errors = 'ignore')
+    df_dom = df_dom.drop(columns = ['dominio_clave'], errors = 'ignore')
+
     df_dist = pd.concat(dists, ignore_index = True) if dists else pd.DataFrame()
     df_demo_sexo = pd.concat(demos_sexo, ignore_index = True) if demos_sexo else pd.DataFrame()
     df_demo_edad = pd.concat(demos_edad, ignore_index = True) if demos_edad else pd.DataFrame()
