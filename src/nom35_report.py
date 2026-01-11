@@ -352,25 +352,27 @@ def build_site_report_tables(
     edad_filter = _as_list(rango_edad)
     ant_filter = _as_list(rango_antiguedad_meses)
 
+    # 1) Filtrado por listas (si aplica)
     if sites_filter is None:
         df_scope = df_in.copy()
     else:
         df_scope = df_in[df_in['site'].isin(sites_filter)].copy()
 
-    # GENERAL solo si hay más de un site REAL en el DF filtrado
-    n_sites = df_scope['site'].dropna().astype(str).nunique()
-    include_general = n_sites > 1
-if sexo_filter is not None:
+    if sexo_filter is not None and 'sexo_norm' in df_scope.columns:
         df_scope = df_scope[df_scope['sexo_norm'].isin(sexo_filter)].copy()
 
-    if edad_filter is not None:
+    if edad_filter is not None and 'rango_edad' in df_scope.columns:
         df_scope = df_scope[df_scope['rango_edad'].isin(edad_filter)].copy()
 
-    if ant_filter is not None:
+    if ant_filter is not None and 'rango_antiguedad_meses' in df_scope.columns:
         df_scope = df_scope[df_scope['rango_antiguedad_meses'].isin(ant_filter)].copy()
 
     if df_scope.empty:
         raise ValueError('No hay registros con los filtros seleccionados.')
+
+    # GENERAL solo si hay más de un site real en el DF filtrado
+    n_sites = df_scope['site'].dropna().astype(str).nunique() if 'site' in df_scope.columns else 0
+    include_general = n_sites > 1
 
     def _make_header_row(df_part, site_label):
         prom_final = df_part['count_final'].mean()
@@ -458,13 +460,19 @@ if sexo_filter is not None:
 
     def _make_demo_tables(df_part, site_label):
         df_demo_sexo = _build_dist_table(
-            series_in = df_part['sexo_norm'],
+            series_in = df_part['sexo_norm'] if 'sexo_norm' in df_part.columns else pd.Series([pd.NA] * len(df_part)),
             label_col = 'sexo',
             no_spec_label = 'No especificado',
             order = ['Femenino', 'Masculino', 'No binario', 'Otro', 'No especificado'],
         )
-        df_demo_edad = _build_dist_table(df_part['rango_edad'], 'rango_edad')
-        df_demo_ant = _build_dist_table(df_part['rango_antiguedad_meses'], 'rango_antiguedad_meses')
+        df_demo_edad = _build_dist_table(
+            df_part['rango_edad'] if 'rango_edad' in df_part.columns else pd.Series([pd.NA] * len(df_part)),
+            'rango_edad'
+        )
+        df_demo_ant = _build_dist_table(
+            df_part['rango_antiguedad_meses'] if 'rango_antiguedad_meses' in df_part.columns else pd.Series([pd.NA] * len(df_part)),
+            'rango_antiguedad_meses'
+        )
 
         df_demo_sexo.insert(0, 'site', site_label)
         df_demo_edad.insert(0, 'site', site_label)
@@ -475,8 +483,8 @@ if sexo_filter is not None:
     headers, cats, doms, dists = [], [], [], []
     demos_sexo, demos_edad, demos_ant = [], [], []
 
-    sites_present = sorted(df_scope['site'].dropna().astype(str).unique().tolist())
-    has_na_site = df_scope['site'].isna().any()
+    sites_present = sorted(df_scope['site'].dropna().astype(str).unique().tolist()) if 'site' in df_scope.columns else []
+    has_na_site = df_scope['site'].isna().any() if 'site' in df_scope.columns else False
 
     for s in sites_present:
         df_part = df_scope[df_scope['site'].astype(str) == s].copy()
@@ -522,13 +530,14 @@ if sexo_filter is not None:
     df_header = pd.DataFrame(headers)
     df_cat = pd.concat(cats, ignore_index = True) if cats else pd.DataFrame()
     df_dom = pd.concat(doms, ignore_index = True) if doms else pd.DataFrame()
-    df_cat = df_cat.drop(columns = ['categoria_clave'], errors = 'ignore')
-    df_dom = df_dom.drop(columns = ['dominio_clave'], errors = 'ignore')
-
     df_dist = pd.concat(dists, ignore_index = True) if dists else pd.DataFrame()
     df_demo_sexo = pd.concat(demos_sexo, ignore_index = True) if demos_sexo else pd.DataFrame()
     df_demo_edad = pd.concat(demos_edad, ignore_index = True) if demos_edad else pd.DataFrame()
     df_demo_antiguedad = pd.concat(demos_ant, ignore_index = True) if demos_ant else pd.DataFrame()
+
+    # Quitar columnas *_clave en outputs de tablas
+    df_cat = df_cat.drop(columns = ['categoria_clave'], errors = 'ignore')
+    df_dom = df_dom.drop(columns = ['dominio_clave'], errors = 'ignore')
 
     def _sort_general_last(df, site_col = 'site'):
         if df.empty or site_col not in df.columns:
@@ -555,3 +564,4 @@ if sexo_filter is not None:
         df_demo_edad,
         df_demo_antiguedad,
     )
+
