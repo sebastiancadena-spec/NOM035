@@ -97,7 +97,7 @@ if not st.session_state.get('do_process', False):
 with st.spinner('Procesando archivos...'):
     df_raw = load_many_files(uploaded_files, site_overrides = site_overrides)
 
-ensure_classified_layout(df_raw)
+df_raw = ensure_classified_layout(df_raw)
 
 nom35_final = prepare_nom35_dataframe(df_raw, edad_step = int(edad_step), antiguedad_step = int(antiguedad_step))
 
