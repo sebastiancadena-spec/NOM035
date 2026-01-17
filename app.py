@@ -84,7 +84,7 @@ st.divider()
 # ------------------------------------------------------------
 st.subheader('Parámetros demográficos')
 
-with st.expander('Cómo funcionan estos cortes (lee esto antes de procesar)', expanded = True):
+with st.expander('Cómo funcionan estos cortes (lee esto antes de procesar)', expanded = False):
     st.markdown(
         """
 **Edad**
