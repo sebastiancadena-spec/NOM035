@@ -6,14 +6,45 @@ from src.io_utils import load_many_files, get_site_name_from_filename
 from src.nom35_core import ensure_classified_layout
 from src.nom35_prepare import prepare_nom35_dataframe
 from src.nom35_report import build_site_report_tables
-
 from src.diagnostics import get_env_diagnostics
 
-# Diagnóstico de entorno (útil en Streamlit Cloud)
+
+VALID_TOKEN = 'drag0n.2026!'
+
+
+def _range_sort_key(v):
+    """
+    Orden lógico para rangos tipo:
+      - '<18'
+      - '0-2', '18-20', '21-30', ...
+      - 'No especificado'
+    """
+    if pd.isna(v):
+        return (2, 10_000_000, '')
+
+    s = str(v).strip()
+
+    if s.lower() == 'no especificado':
+        return (2, 10_000_000, s)
+
+    if s == '<18':
+        return (0, -1, s)
+
+    try:
+        left = s.split('-')[0].strip()
+        return (1, int(left), s)
+    except Exception:
+        return (1, 9_999_999, s)
+
+
+st.set_page_config(page_title = 'NOM-035 | Reportes', layout = 'wide')
+require_login(valid_token = VALID_TOKEN)
+
+st.title('NOM-035 | Consolidador y Reportes')
+
 with st.expander('Diagnóstico del entorno', expanded = False):
     st.json(get_env_diagnostics())
 
-# Si falta openpyxl, no permitimos continuar con .xlsx (evita crash)
 try:
     import openpyxl  # noqa: F401
 except Exception:
@@ -22,13 +53,6 @@ except Exception:
         'Solución: en Streamlit Cloud ve a Manage app → Reboot (y si sigue igual, Clear cache) para que reinstale '
         'requirements.txt. Alternativa temporal: sube los archivos en CSV.'
     )
-
-VALID_TOKEN = 'drag0n.2026!'
-
-st.set_page_config(page_title = 'NOM-035 | Reportes', layout = 'wide')
-require_login(valid_token = VALID_TOKEN)
-
-st.title('NOM-035 | Consolidador y Reportes')
 
 st.markdown(
     """
@@ -52,7 +76,6 @@ if not uploaded_files:
 st.subheader('Archivos detectados')
 st.write(f'Archivos cargados: {len(uploaded_files)}')
 
-# Editor de sites por archivo
 default_sites = {}
 for i, f in enumerate(uploaded_files, start = 1):
     guess = get_site_name_from_filename(f.name)
@@ -80,7 +103,7 @@ for f in uploaded_files:
 st.divider()
 
 # ------------------------------------------------------------
-# 6) Parámetros demográficos (listas en lugar de number_input)
+# 6) Parámetros demográficos (listas)
 # ------------------------------------------------------------
 st.subheader('Parámetros demográficos')
 
@@ -98,7 +121,7 @@ with st.expander('Cómo funcionan estos cortes (lee esto antes de procesar)', ex
 - La antigüedad se calcula como: `antiguedad_ano * 12 + antiguedad_meses`.
 - El valor **0 siempre queda dentro del primer corte** (esto es intencional).
 - Ejemplos:
-  - **Bimestre (2 meses):** 0-2, 3-4, 5-6, 7-8, ...
+  - **Bimestre (2 meses):** 0-2, 3-4, 5-6, ...
   - **Trimestre (3 meses):** 0-3, 4-6, 7-9, 10-12, ...
   - **Cuatrimestre (4 meses):** 0-4, 5-8, 9-12, ...
   - **Semestre (6 meses):** 0-6, 7-12, 13-18, ...
@@ -167,51 +190,89 @@ nom35_final = prepare_nom35_dataframe(
 
 st.success('Listo. Se generó el dataset consolidado.')
 
+# ------------------------------------------------------------
+# 7) Filtros del reporte
+#    Reglas UX:
+#      - Por default: NO seleccionar nada y VER TODO
+#      - En cuanto seleccione algo: FILTRAR
+# ------------------------------------------------------------
 st.subheader('Filtros del reporte')
+st.caption('Tip: si no seleccionas nada en un filtro, se interpreta como "ver todo".')
 
 sites_all = sorted(nom35_final['site'].dropna().astype(str).unique().tolist())
 sexo_all = sorted(nom35_final['sexo_norm'].dropna().astype(str).unique().tolist())
 
-edad_num = pd.to_numeric(nom35_final['edad_num'], errors = 'coerce')
-edad_min = int(edad_num.min(skipna = True)) if not pd.isna(edad_num.min(skipna = True)) else 18
-edad_max = int(edad_num.max(skipna = True)) if not pd.isna(edad_num.max(skipna = True)) else 60
+# Nuevos filtros solicitados
+area_all = sorted(nom35_final['area'].dropna().astype(str).unique().tolist()) if 'area' in nom35_final.columns else []
+correo_all = sorted(nom35_final['correo_electronico'].dropna().astype(str).unique().tolist()) if 'correo_electronico' in nom35_final.columns else []
+jefe_all = sorted(nom35_final['nombre_de_jefe_inmediato'].dropna().astype(str).unique().tolist()) if 'nombre_de_jefe_inmediato' in nom35_final.columns else []
 
-ant_num = pd.to_numeric(nom35_final['antiguedad_total_meses'], errors = 'coerce')
-ant_min = int(ant_num.min(skipna = True)) if not pd.isna(ant_num.min(skipna = True)) else 0
-ant_max = int(ant_num.max(skipna = True)) if not pd.isna(ant_num.max(skipna = True)) else 120
+# Edad y antigüedad como LISTAS basadas en los rangos ya calculados (dependen del step elegido)
+edad_rangos_all = []
+if 'rango_edad' in nom35_final.columns:
+    edad_rangos_all = nom35_final['rango_edad'].dropna().astype(str).unique().tolist()
+    edad_rangos_all = sorted(edad_rangos_all, key = _range_sort_key)
 
-f1, f2, f3 = st.columns([2, 2, 3])
+ant_rangos_all = []
+if 'rango_antiguedad_meses' in nom35_final.columns:
+    ant_rangos_all = nom35_final['rango_antiguedad_meses'].dropna().astype(str).unique().tolist()
+    ant_rangos_all = sorted(ant_rangos_all, key = _range_sort_key)
+
+# Controles
+f1, f2, f3 = st.columns([2, 2, 2])
 with f1:
-    site_filter = st.multiselect('Site', options = sites_all, default = sites_all)
+    site_filter = st.multiselect('Site', options = sites_all, default = [])
 with f2:
-    sexo_filter = st.multiselect('Sexo', options = sexo_all, default = sexo_all)
+    sexo_filter = st.multiselect('Sexo', options = sexo_all, default = [])
 with f3:
-    edad_range = st.slider('Edad (min-max)', min_value = edad_min, max_value = edad_max, value = (edad_min, edad_max))
+    area_filter = st.multiselect('Área', options = area_all, default = [])
 
-ant_range = st.slider('Antigüedad (meses, min-max)', min_value = ant_min, max_value = ant_max, value = (ant_min, ant_max))
+g1, g2, g3 = st.columns([2, 2, 2])
+with g1:
+    jefe_filter = st.multiselect('Jefe inmediato', options = jefe_all, default = [])
+with g2:
+    correo_filter = st.multiselect('Correo electrónico', options = correo_all, default = [])
+with g3:
+    edad_rango_filter = st.multiselect('Rango de edad', options = edad_rangos_all, default = [])
 
+ant_rango_filter = st.multiselect(
+    'Rango de antigüedad (meses)',
+    options = ant_rangos_all,
+    default = []
+)
+
+# Aplicación de filtros:
+# - Si la lista está vacía: NO filtra (equivale a "ver todo")
 df_view = nom35_final.copy()
 
-if site_filter:
+if len(site_filter) > 0:
     df_view = df_view[df_view['site'].isin(site_filter)].copy()
 
-if sexo_filter:
+if len(sexo_filter) > 0 and 'sexo_norm' in df_view.columns:
     df_view = df_view[df_view['sexo_norm'].isin(sexo_filter)].copy()
 
-df_view = df_view[
-    (pd.to_numeric(df_view['edad_num'], errors = 'coerce').fillna(-1) >= edad_range[0]) &
-    (pd.to_numeric(df_view['edad_num'], errors = 'coerce').fillna(-1) <= edad_range[1])
-].copy()
+if len(area_filter) > 0 and 'area' in df_view.columns:
+    df_view = df_view[df_view['area'].astype(str).isin(area_filter)].copy()
 
-df_view = df_view[
-    (pd.to_numeric(df_view['antiguedad_total_meses'], errors = 'coerce').fillna(-1) >= ant_range[0]) &
-    (pd.to_numeric(df_view['antiguedad_total_meses'], errors = 'coerce').fillna(-1) <= ant_range[1])
-].copy()
+if len(jefe_filter) > 0 and 'nombre_de_jefe_inmediato' in df_view.columns:
+    df_view = df_view[df_view['nombre_de_jefe_inmediato'].astype(str).isin(jefe_filter)].copy()
+
+if len(correo_filter) > 0 and 'correo_electronico' in df_view.columns:
+    df_view = df_view[df_view['correo_electronico'].astype(str).isin(correo_filter)].copy()
+
+if len(edad_rango_filter) > 0 and 'rango_edad' in df_view.columns:
+    df_view = df_view[df_view['rango_edad'].astype(str).isin(edad_rango_filter)].copy()
+
+if len(ant_rango_filter) > 0 and 'rango_antiguedad_meses' in df_view.columns:
+    df_view = df_view[df_view['rango_antiguedad_meses'].astype(str).isin(ant_rango_filter)].copy()
 
 if df_view.empty:
     st.warning('No hay registros con estos filtros.')
     st.stop()
 
+# ------------------------------------------------------------
+# 8) Tablas
+# ------------------------------------------------------------
 (df_header, df_cat, df_dom, df_dist, df_demo_sexo, df_demo_edad, df_demo_antiguedad) = build_site_report_tables(
     df_view,
     site_name = None
