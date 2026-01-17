@@ -547,13 +547,62 @@ def build_site_report_tables(
         df = df.sort_values(['_ord', site_col]).drop(columns = ['_ord']).reset_index(drop = True)
         return df
 
+    def _sort_demo_range(df, label_col, site_col = 'site'):
+        """
+        Ordena tablas demográficas por:
+          1) site (GENERAL al final)
+          2) inicio del rango (numérico)
+
+        Reglas:
+          - '<18' va primero
+          - 'No especificado' va al final dentro de cada site
+        """
+        if df.empty or site_col not in df.columns or label_col not in df.columns:
+            return df
+
+        out = df.copy()
+
+        def _range_key(v):
+            if pd.isna(v):
+                return 10_000_000
+
+            s = str(v).strip()
+
+            if s == '<18':
+                return -1
+
+            if s.lower() == 'no especificado':
+                return 10_000_000
+
+            # Formatos esperados: '0-2', '18-20', '21-30', etc.
+            try:
+                left = s.split('-')[0].strip()
+                return int(left)
+            except Exception:
+                return 9_999_999
+
+        out['_site_ord'] = out[site_col].map(lambda x: 1 if x == 'GENERAL' else 0)
+        out['_range_ord'] = out[label_col].map(_range_key)
+
+        out = out.sort_values(
+            by = ['_site_ord', site_col, '_range_ord', label_col],
+            ascending = [True, True, True, True]
+        )
+
+        out = out.drop(columns = ['_site_ord', '_range_ord']).reset_index(drop = True)
+        return out
+
     df_header = _sort_general_last(df_header)
     df_cat = _sort_general_last(df_cat)
     df_dom = _sort_general_last(df_dom)
     df_dist = _sort_general_last(df_dist)
+
+    # Demo sexo sigue con el orden actual (Femenino, Masculino, ...)
     df_demo_sexo = _sort_general_last(df_demo_sexo)
-    df_demo_edad = _sort_general_last(df_demo_edad)
-    df_demo_antiguedad = _sort_general_last(df_demo_antiguedad)
+
+    # Demo edad y antigüedad ahora quedan por site + rango lógico
+    df_demo_edad = _sort_demo_range(df_demo_edad, label_col = 'rango_edad')
+    df_demo_antiguedad = _sort_demo_range(df_demo_antiguedad, label_col = 'rango_antiguedad_meses')
 
     return (
         df_header,
@@ -564,4 +613,3 @@ def build_site_report_tables(
         df_demo_edad,
         df_demo_antiguedad,
     )
-
