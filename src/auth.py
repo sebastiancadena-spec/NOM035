@@ -2,22 +2,25 @@ import streamlit as st
 
 
 def require_login(valid_token: str):
-    if 'is_authed' not in st.session_state:
-        st.session_state['is_authed'] = False
+    if st.session_state.get('authenticated', False):
+        return
 
-    if st.session_state['is_authed']:
-        return True
+    st.title('Acceso requerido')
 
-    st.title('NOM-035 | Reportes')
-    st.info('Ingresa el token para continuar.')
+    with st.form('login_form', clear_on_submit = False):
+        token = st.text_input(
+            'Token de acceso',
+            type = 'password',
+            placeholder = 'Ingresa el token y presiona Enter'
+        )
+        submitted = st.form_submit_button('Entrar')
 
-    token = st.text_input('Token', type = 'password')
-
-    if st.button('Entrar'):
+    if submitted:
         if token == valid_token:
-            st.session_state['is_authed'] = True
+            st.session_state['authenticated'] = True
+            st.success('Acceso concedido')
             st.rerun()
         else:
-            st.error('Token incorrecto.')
+            st.error('Token incorrecto')
 
     st.stop()
