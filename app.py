@@ -5,11 +5,12 @@ from src.auth import require_login
 from src.io_utils import load_many_files, get_site_name_from_filename
 from src.nom35_core import ensure_classified_layout
 from src.nom35_prepare import prepare_nom35_dataframe
-from src.nom35_report import build_site_report_tables
+from src.nom35_report import build_site_report_tables, DISPLAY_NAMES, DOMAIN_DIM_TEXT
+from src.nom35_scoring import GROUPS
 from src.diagnostics import get_env_diagnostics
 
 
-VALID_TOKEN = 'drag0n.2026!'
+VALID_TOKEN = 'Dragon.2026!'
 
 
 def _range_sort_key(v):
@@ -45,8 +46,115 @@ def _clear_all_filters():
     st.session_state['flt_correo'] = []
     st.session_state['flt_edad_rango'] = []
     st.session_state['flt_ant_rango'] = []
-
     st.rerun()
+
+
+def _pretty_question_name(q_col: str) -> str:
+    """
+    Convierte el nombre de la columna (snake_case largo) a algo legible.
+    """
+    if not isinstance(q_col, str):
+        return str(q_col)
+
+    s = q_col.replace('_', ' ').strip()
+    if s == '':
+        return q_col
+
+    return s[:1].upper() + s[1:]
+
+
+def _build_group_detail_table(df_in: pd.DataFrame, site_col: str, question_cols: list[str]) -> pd.DataFrame:
+    """
+    Construye una tabla tipo:
+      site | reactivo | promedio | mediana | n_validos
+
+    Usa score__{reactivo} si existe; si no, intenta usar el reactivo tal cual (numérico).
+    """
+    df = df_in.copy()
+
+    sites = sorted(df[site_col].dropna().astype(str).unique().tolist()) if site_col in df.columns else []
+    include_general = len(sites) > 1
+
+    rows = []
+
+    for q in question_cols:
+        score_col = f'score__{q}'
+        base_col = score_col if score_col in df.columns else q
+
+        if base_col not in df.columns:
+            continue
+
+        # Nos aseguramos de que sea numérico para promedio/mediana
+        s_all = pd.to_numeric(df[base_col], errors = 'coerce')
+
+        # Por site
+        for site in sites:
+            s_site = pd.to_numeric(df.loc[df[site_col].astype(str) == site, base_col], errors = 'coerce')
+            n_valid = int(s_site.notna().sum())
+
+            rows.append({
+                'site': site,
+                'reactivo': _pretty_question_name(q),
+                'promedio': float(s_site.mean(skipna = True)) if n_valid > 0 else pd.NA,
+                'mediana': float(s_site.median(skipna = True)) if n_valid > 0 else pd.NA,
+                'n_validos': n_valid,
+            })
+
+        # GENERAL (si aplica)
+        if include_general:
+            n_valid = int(s_all.notna().sum())
+            rows.append({
+                'site': 'GENERAL',
+                'reactivo': _pretty_question_name(q),
+                'promedio': float(s_all.mean(skipna = True)) if n_valid > 0 else pd.NA,
+                'mediana': float(s_all.median(skipna = True)) if n_valid > 0 else pd.NA,
+                'n_validos': n_valid,
+            })
+
+    out = pd.DataFrame(rows)
+
+    if out.empty:
+        return out
+
+    # Orden: site (GENERAL al final), luego reactivo alfabético
+    out['_ord'] = out['site'].map(lambda x: 1 if x == 'GENERAL' else 0)
+    out = out.sort_values(['_ord', 'site', 'reactivo']).drop(columns = ['_ord']).reset_index(drop = True)
+
+    return out
+
+
+def _get_category_keys():
+    """
+    Categorías = las primeras 5 (count_*) según TARGET_VARS (mismo orden que en reportes)
+    """
+    return [
+        'ambiente_de_trabajo',
+        'factores_propios_de_la_actividad',
+        'organizacion_en_el_trabajo',
+        'liderazgo_y_relaciones_en_el_trabajo',
+        'entorno_organizacional',
+    ]
+
+
+def _get_domain_keys():
+    """
+    Dominios = los 12 dominios + 2 dominios "guía" (condiciones_deficientes..., trabajos_peligrosos)
+    (mismo set que manejas en reportes)
+    """
+    return [
+        'condiciones_deficientes_e_insalubres',
+        'trabajos_peligrosos',
+        'condiciones_en_el_ambiente_de_trabajo',
+        'carga_de_trabajo',
+        'falta_de_control_sobre_el_trabajo',
+        'jornada_de_trabajo',
+        'influencia_en_la_relacion_trabajo_y_familia',
+        'liderazgo',
+        'relaciones_en_el_trabajo',
+        'violencia',
+        'reconocimiento_del_desempeno',
+        'insuficiente_sentido_de_pertenencia_e_inestabilidad',
+    ]
 
 
 st.set_page_config(page_title = 'NOM-035 | Reportes', layout = 'wide')
@@ -57,7 +165,6 @@ st.title('NOM-035 | Consolidador y Reportes')
 with st.expander('Diagnóstico del entorno', expanded = False):
     st.json(get_env_diagnostics())
 
-# Si falta openpyxl, avisamos para .xlsx
 try:
     import openpyxl  # noqa: F401
 except Exception:
@@ -89,9 +196,6 @@ if not uploaded_files:
 st.subheader('Archivos detectados')
 st.write(f'Archivos cargados: {len(uploaded_files)}')
 
-# ------------------------------------------------------------
-# 1) Inferir / capturar site por archivo
-# ------------------------------------------------------------
 default_sites = {}
 for i, f in enumerate(uploaded_files, start = 1):
     guess = get_site_name_from_filename(f.name)
@@ -119,7 +223,7 @@ for f in uploaded_files:
 st.divider()
 
 # ------------------------------------------------------------
-# 6) Parámetros demográficos (listas)
+# Parámetros demográficos
 # ------------------------------------------------------------
 st.subheader('Parámetros demográficos')
 
@@ -135,13 +239,7 @@ with st.expander('Cómo funcionan estos cortes (lee esto antes de procesar)', ex
 
 **Antigüedad (en meses)**
 - La antigüedad se calcula como: `antiguedad_ano * 12 + antiguedad_meses`.
-- El valor **0 siempre queda dentro del primer corte** (esto es intencional).
-- Ejemplos:
-  - **Bimestre (2 meses):** 0-2, 3-4, 5-6, ...
-  - **Trimestre (3 meses):** 0-3, 4-6, 7-9, 10-12, ...
-  - **Cuatrimestre (4 meses):** 0-4, 5-8, 9-12, ...
-  - **Semestre (6 meses):** 0-6, 7-12, 13-18, ...
-  - **Año (12 meses):** 0-12, 13-24, 25-36, ...
+- El valor **0** siempre queda dentro del primer corte (esto es intencional).
 """
     )
 
@@ -194,7 +292,7 @@ if not st.session_state.get('results_ready', False):
     st.stop()
 
 # ------------------------------------------------------------
-# 7) Procesamiento
+# Procesamiento
 # ------------------------------------------------------------
 with st.spinner('Procesando archivos...'):
     df_raw = load_many_files(uploaded_files, site_overrides = site_overrides)
@@ -210,10 +308,7 @@ nom35_final = prepare_nom35_dataframe(
 st.success('Listo. Se generó el dataset consolidado.')
 
 # ------------------------------------------------------------
-# 8) Filtros del reporte
-#    Regla UX:
-#      - Por default: no seleccionar nada y ver todo
-#      - En cuanto seleccione uno o más valores: filtrar
+# Filtros del reporte
 # ------------------------------------------------------------
 st.subheader('Filtros del reporte')
 st.caption('Si no seleccionas nada en un filtro, se interpreta como "ver todo".')
@@ -289,7 +384,7 @@ if df_view.empty:
     st.stop()
 
 # ------------------------------------------------------------
-# 9) Tablas
+# Sección 1: Resultados originales (tabs existentes)
 # ------------------------------------------------------------
 (
     df_header,
@@ -327,3 +422,69 @@ with tabs[5]:
     st.dataframe(df_demo_edad, use_container_width = True)
 with tabs[6]:
     st.dataframe(df_demo_antiguedad, use_container_width = True)
+
+# ------------------------------------------------------------
+# Sección 2: Zoom por CATEGORÍAS (tabs nuevas abajo)
+# ------------------------------------------------------------
+st.divider()
+st.subheader('Detalle por categoría (zoom)')
+
+category_keys = _get_category_keys()
+category_tab_names = [DISPLAY_NAMES.get(k, k.replace('_', ' ').title()) for k in category_keys]
+cat_tabs = st.tabs(category_tab_names)
+
+for tab, cat_key in zip(cat_tabs, category_keys):
+    with tab:
+        group_name = f'count_{cat_key}'
+        question_cols = GROUPS.get(group_name, [])
+
+        st.caption(
+            'Promedios y medianas por site para cada reactivo que compone esta categoría '
+            '(usando columnas score__* cuando existan).'
+        )
+
+        df_detail = _build_group_detail_table(
+            df_in = df_view,
+            site_col = 'site',
+            question_cols = question_cols
+        )
+
+        if df_detail.empty:
+            st.warning('No se encontraron reactivos para esta categoría en el dataset actual.')
+        else:
+            st.dataframe(df_detail, use_container_width = True)
+
+# ------------------------------------------------------------
+# Sección 3: Zoom por DOMINIOS (tabs nuevas abajo)
+# ------------------------------------------------------------
+st.divider()
+st.subheader('Detalle por dominio (zoom)')
+
+domain_keys = _get_domain_keys()
+domain_tab_names = [DISPLAY_NAMES.get(k, k.replace('_', ' ').title()) for k in domain_keys]
+dom_tabs = st.tabs(domain_tab_names)
+
+for tab, dom_key in zip(dom_tabs, domain_keys):
+    with tab:
+        group_name = f'count_{dom_key}'
+        question_cols = GROUPS.get(group_name, [])
+
+        dim_lines = DOMAIN_DIM_TEXT.get(dom_key, [])
+        if dim_lines:
+            st.caption('Dimensiones asociadas: ' + ' | '.join(dim_lines))
+
+        st.caption(
+            'Promedios y medianas por site para cada reactivo que compone este dominio '
+            '(usando columnas score__* cuando existan).'
+        )
+
+        df_detail = _build_group_detail_table(
+            df_in = df_view,
+            site_col = 'site',
+            question_cols = question_cols
+        )
+
+        if df_detail.empty:
+            st.warning('No se encontraron reactivos para este dominio en el dataset actual.')
+        else:
+            st.dataframe(df_detail, use_container_width = True)
