@@ -58,7 +58,27 @@ def _homologate_text_value(value):
     return s
 
 
-def _bin_numeric_series(series_in, step, start_value, no_spec_label = 'No especificado', min_value_allowed = None):
+def _bin_numeric_series(
+    series_in,
+    step,
+    start_value,
+    no_spec_label = 'No especificado',
+    min_value_allowed = None,
+    include_zero_in_first_bin = False,
+):
+    """
+    Crea bins tipo 'low-high'.
+
+    Caso especial (lo que pidió el usuario):
+    - Cuando include_zero_in_first_bin = True y start_value = 0:
+      el primer bin es 0-step (incluye el 0 dentro del primer corte),
+      y después se continúan bins de tamaño step:
+        step = 2 -> 0-2, 3-4, 5-6, ...
+        step = 3 -> 0-3, 4-6, 7-9, ...
+        step = 4 -> 0-4, 5-8, 9-12, ...
+        step = 6 -> 0-6, 7-12, 13-18, ...
+        step = 12 -> 0-12, 13-24, 25-36, ...
+    """
     s = pd.to_numeric(series_in, errors = 'coerce')
 
     if min_value_allowed is not None:
@@ -68,13 +88,21 @@ def _bin_numeric_series(series_in, step, start_value, no_spec_label = 'No especi
     if pd.isna(s_max):
         return pd.Series([no_spec_label] * len(series_in), index = series_in.index)
 
+    step = int(step)
+    if step <= 0:
+        return pd.Series([no_spec_label] * len(series_in), index = series_in.index)
+
     max_val = int(s_max)
 
     bins = []
     labels = []
 
     low = int(start_value)
-    high = int(start_value + step - 1)
+
+    if include_zero_in_first_bin and int(start_value) == 0:
+        high = int(start_value + step)      # primer corte: 0-step
+    else:
+        high = int(start_value + step - 1)  # corte normal: 0-(step-1)
 
     while low <= max_val:
         bins.append((low, high))
@@ -106,21 +134,27 @@ def _bin_numeric_series(series_in, step, start_value, no_spec_label = 'No especi
 def _build_age_bins(series_age, step = 5, no_spec_label = 'No especificado'):
     """
     Bins de edad:
+    - Si hay edades < 18, se etiquetan como '<18'
     - Siempre reserva 18-20
-    - Para step = 5: 21-25, 26-30, ...
-    - Para step != 5: usa bins desde 21 con tamaño = step: 21-(21+step-1), ...
-    Maneja NA y edades < 18 como 'No especificado'.
+    - Después, desde 21:
+        step = 5  -> 21-25, 26-30, ...
+        step = 10 -> 21-30, 31-40, ...
+    - NA se mantiene como 'No especificado'
     """
     age_num = pd.to_numeric(series_age, errors = 'coerce')
     age_num = age_num.where(age_num >= 0, other = pd.NA)
 
     out = pd.Series([no_spec_label] * len(age_num), index = age_num.index)
 
+    # <18
+    mask_lt_18 = age_num.between(0, 17, inclusive = 'both')
+    out.loc[mask_lt_18] = '<18'
+
     # 18-20
     mask_18_20 = age_num.between(18, 20, inclusive = 'both')
     out.loc[mask_18_20] = '18-20'
 
-    # mayores o iguales a 21
+    # >=21
     mask_21p = age_num >= 21
     if not mask_21p.any():
         return out
@@ -129,7 +163,6 @@ def _build_age_bins(series_age, step = 5, no_spec_label = 'No especificado'):
     if step <= 0:
         return out
 
-    # Definir bins desde 21
     max_val = int(age_num[mask_21p].max(skipna = True))
 
     bins = []
@@ -164,6 +197,7 @@ def _build_age_bins(series_age, step = 5, no_spec_label = 'No especificado'):
 
     out.loc[mask_21p] = age_num.loc[mask_21p].map(_assign)
     return out
+
 
 def _normalize_sexo(series_in):
     sexo_series = series_in.map(_normalize_str_or_na)
@@ -229,6 +263,7 @@ def prepare_nom35_dataframe(df_in, edad_step = 5, antiguedad_step = 5):
             start_value = 0,
             no_spec_label = 'No especificado',
             min_value_allowed = 0,
+            include_zero_in_first_bin = True,
         ).fillna('No especificado')
     else:
         df['antiguedad_total_meses'] = pd.NA
