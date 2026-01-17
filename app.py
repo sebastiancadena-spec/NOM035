@@ -23,8 +23,6 @@ except Exception:
         'requirements.txt. Alternativa temporal: sube los archivos en CSV.'
     )
 
-
-
 VALID_TOKEN = 'drag0n.2026!'
 
 st.set_page_config(page_title = 'NOM-035 | Reportes', layout = 'wide')
@@ -34,7 +32,7 @@ st.title('NOM-035 | Consolidador y Reportes')
 
 st.markdown(
     """
-**Instructivo**
+**Instructivo general**
 - Sube archivos **.xlsx** o **.csv** con layout NOM-035 (clasificado).
 - Para que la app detecte la planta automáticamente: el archivo debe iniciar con `PLANTA_EN_MAYUSCULAS-...`
   - Ejemplo: `EMPECO_C-69.xlsx` → `EMPECO C`
@@ -81,12 +79,62 @@ for f in uploaded_files:
 
 st.divider()
 
+# ------------------------------------------------------------
+# 6) Parámetros demográficos (listas en lugar de number_input)
+# ------------------------------------------------------------
 st.subheader('Parámetros demográficos')
+
+with st.expander('Cómo funcionan estos cortes (lee esto antes de procesar)', expanded = True):
+    st.markdown(
+        """
+**Edad**
+- La app siempre separa primero el rango **18-20**.
+- Si existen edades menores a 18, se etiquetan como **`<18`**.
+- Después, el resto se agrupa con el tamaño que selecciones:
+  - **Rangos de 5 años:** 21-25, 26-30, 31-35, ...
+  - **Rangos de 10 años:** 21-30, 31-40, 41-50, ...
+
+**Antigüedad (en meses)**
+- La antigüedad se calcula como: `antiguedad_ano * 12 + antiguedad_meses`.
+- El valor **0 siempre queda dentro del primer corte** (esto es intencional).
+- Ejemplos:
+  - **Bimestre (2 meses):** 0-2, 3-4, 5-6, 7-8, ...
+  - **Trimestre (3 meses):** 0-3, 4-6, 7-9, 10-12, ...
+  - **Cuatrimestre (4 meses):** 0-4, 5-8, 9-12, ...
+  - **Semestre (6 meses):** 0-6, 7-12, 13-18, ...
+  - **Año (12 meses):** 0-12, 13-24, 25-36, ...
+"""
+    )
+
+edad_options = {
+    'Rangos de 5 años (recomendado)': 5,
+    'Rangos de 10 años': 10,
+}
+
+antiguedad_options = {
+    'Bimestre (2 meses)': 2,
+    'Trimestre (3 meses)': 3,
+    'Cuatrimestre (4 meses)': 4,
+    'Semestre (6 meses)': 6,
+    'Año (12 meses)': 12,
+}
+
 c1, c2 = st.columns(2)
 with c1:
-    edad_step = st.number_input('Corte de edad (step)', min_value = 1, max_value = 20, value = 5, step = 1)
+    edad_label = st.selectbox(
+        'Corte de edad',
+        options = list(edad_options.keys()),
+        index = 0
+    )
 with c2:
-    antiguedad_step = st.number_input('Corte de antigüedad (meses, step)', min_value = 1, max_value = 60, value = 5, step = 1)
+    antiguedad_label = st.selectbox(
+        'Corte de antigüedad (en meses)',
+        options = list(antiguedad_options.keys()),
+        index = 0
+    )
+
+edad_step = int(edad_options[edad_label])
+antiguedad_step = int(antiguedad_options[antiguedad_label])
 
 if 'results_ready' not in st.session_state:
     st.session_state['results_ready'] = False
@@ -103,16 +151,19 @@ with col_b:
 if run_process:
     st.session_state['results_ready'] = True
 
-
 if not st.session_state.get('results_ready', False):
     st.stop()
 
 with st.spinner('Procesando archivos...'):
     df_raw = load_many_files(uploaded_files, site_overrides = site_overrides)
 
-df_raw = df_raw = ensure_classified_layout(df_raw)
+df_raw = ensure_classified_layout(df_raw)
 
-nom35_final = prepare_nom35_dataframe(df_raw, edad_step = int(edad_step), antiguedad_step = int(antiguedad_step))
+nom35_final = prepare_nom35_dataframe(
+    df_raw,
+    edad_step = edad_step,
+    antiguedad_step = antiguedad_step
+)
 
 st.success('Listo. Se generó el dataset consolidado.')
 
