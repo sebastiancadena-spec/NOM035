@@ -9,7 +9,7 @@ from src.nom35_report import build_site_report_tables
 from src.diagnostics import get_env_diagnostics
 
 
-VALID_TOKEN = 'drag0n.2026!'
+VALID_TOKEN = 'Dragon.2026!'
 
 
 def _range_sort_key(v):
