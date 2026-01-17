@@ -38,20 +38,9 @@ def _range_sort_key(v):
 
 
 def _clear_all_filters():
-    keys_to_clear = [
-        'flt_site',
-        'flt_sexo',
-        'flt_area',
-        'flt_jefe',
-        'flt_correo',
-        'flt_edad_rango',
-        'flt_ant_rango',
-    ]
-
-    for k in keys_to_clear:
-        if k in st.session_state:
-            del st.session_state[k]
-
+    for k in list(st.session_state.keys()):
+        if str(k).startswith('flt_'):
+            st.session_state[k] = []
     st.rerun()
 
 
