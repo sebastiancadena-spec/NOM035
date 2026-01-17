@@ -9,7 +9,7 @@ from src.nom35_report import build_site_report_tables
 from src.diagnostics import get_env_diagnostics
 
 
-VALID_TOKEN = 'Dragon.2026!'
+VALID_TOKEN = 'drag0n.2026!'
 
 
 def _range_sort_key(v):
@@ -37,6 +37,24 @@ def _range_sort_key(v):
         return (1, 9_999_999, s)
 
 
+def _clear_all_filters():
+    keys_to_clear = [
+        'flt_site',
+        'flt_sexo',
+        'flt_area',
+        'flt_jefe',
+        'flt_correo',
+        'flt_edad_rango',
+        'flt_ant_rango',
+    ]
+
+    for k in keys_to_clear:
+        if k in st.session_state:
+            del st.session_state[k]
+
+    st.rerun()
+
+
 st.set_page_config(page_title = 'NOM-035 | Reportes', layout = 'wide')
 require_login(valid_token = VALID_TOKEN)
 
@@ -45,6 +63,7 @@ st.title('NOM-035 | Consolidador y Reportes')
 with st.expander('Diagnóstico del entorno', expanded = False):
     st.json(get_env_diagnostics())
 
+# Si falta openpyxl, avisamos para .xlsx
 try:
     import openpyxl  # noqa: F401
 except Exception:
@@ -76,6 +95,9 @@ if not uploaded_files:
 st.subheader('Archivos detectados')
 st.write(f'Archivos cargados: {len(uploaded_files)}')
 
+# ------------------------------------------------------------
+# 1) Inferir / capturar site por archivo
+# ------------------------------------------------------------
 default_sites = {}
 for i, f in enumerate(uploaded_files, start = 1):
     guess = get_site_name_from_filename(f.name)
@@ -177,6 +199,9 @@ if run_process:
 if not st.session_state.get('results_ready', False):
     st.stop()
 
+# ------------------------------------------------------------
+# 7) Procesamiento
+# ------------------------------------------------------------
 with st.spinner('Procesando archivos...'):
     df_raw = load_many_files(uploaded_files, site_overrides = site_overrides)
 
@@ -191,23 +216,23 @@ nom35_final = prepare_nom35_dataframe(
 st.success('Listo. Se generó el dataset consolidado.')
 
 # ------------------------------------------------------------
-# 7) Filtros del reporte
-#    Reglas UX:
-#      - Por default: NO seleccionar nada y VER TODO
-#      - En cuanto seleccione algo: FILTRAR
+# 8) Filtros del reporte
+#    Regla UX:
+#      - Por default: no seleccionar nada y ver todo
+#      - En cuanto seleccione uno o más valores: filtrar
 # ------------------------------------------------------------
 st.subheader('Filtros del reporte')
-st.caption('Tip: si no seleccionas nada en un filtro, se interpreta como "ver todo".')
+st.caption('Si no seleccionas nada en un filtro, se interpreta como "ver todo".')
+
+st.button('Limpiar todos los filtros', on_click = _clear_all_filters)
 
 sites_all = sorted(nom35_final['site'].dropna().astype(str).unique().tolist())
 sexo_all = sorted(nom35_final['sexo_norm'].dropna().astype(str).unique().tolist())
 
-# Nuevos filtros solicitados
 area_all = sorted(nom35_final['area'].dropna().astype(str).unique().tolist()) if 'area' in nom35_final.columns else []
 correo_all = sorted(nom35_final['correo_electronico'].dropna().astype(str).unique().tolist()) if 'correo_electronico' in nom35_final.columns else []
 jefe_all = sorted(nom35_final['nombre_de_jefe_inmediato'].dropna().astype(str).unique().tolist()) if 'nombre_de_jefe_inmediato' in nom35_final.columns else []
 
-# Edad y antigüedad como LISTAS basadas en los rangos ya calculados (dependen del step elegido)
 edad_rangos_all = []
 if 'rango_edad' in nom35_final.columns:
     edad_rangos_all = nom35_final['rango_edad'].dropna().astype(str).unique().tolist()
@@ -218,31 +243,30 @@ if 'rango_antiguedad_meses' in nom35_final.columns:
     ant_rangos_all = nom35_final['rango_antiguedad_meses'].dropna().astype(str).unique().tolist()
     ant_rangos_all = sorted(ant_rangos_all, key = _range_sort_key)
 
-# Controles
 f1, f2, f3 = st.columns([2, 2, 2])
 with f1:
-    site_filter = st.multiselect('Site', options = sites_all, default = [])
+    site_filter = st.multiselect('Site', options = sites_all, default = [], key = 'flt_site')
 with f2:
-    sexo_filter = st.multiselect('Sexo', options = sexo_all, default = [])
+    sexo_filter = st.multiselect('Sexo', options = sexo_all, default = [], key = 'flt_sexo')
 with f3:
-    area_filter = st.multiselect('Área', options = area_all, default = [])
+    area_filter = st.multiselect('Área', options = area_all, default = [], key = 'flt_area')
 
 g1, g2, g3 = st.columns([2, 2, 2])
 with g1:
-    jefe_filter = st.multiselect('Jefe inmediato', options = jefe_all, default = [])
+    jefe_filter = st.multiselect('Jefe inmediato', options = jefe_all, default = [], key = 'flt_jefe')
 with g2:
-    correo_filter = st.multiselect('Correo electrónico', options = correo_all, default = [])
+    correo_filter = st.multiselect('Correo electrónico', options = correo_all, default = [], key = 'flt_correo')
 with g3:
-    edad_rango_filter = st.multiselect('Rango de edad', options = edad_rangos_all, default = [])
+    edad_rango_filter = st.multiselect('Rango de edad', options = edad_rangos_all, default = [], key = 'flt_edad_rango')
 
 ant_rango_filter = st.multiselect(
     'Rango de antigüedad (meses)',
     options = ant_rangos_all,
-    default = []
+    default = [],
+    key = 'flt_ant_rango'
 )
 
-# Aplicación de filtros:
-# - Si la lista está vacía: NO filtra (equivale a "ver todo")
+# Aplicación de filtros (solo si el usuario selecciona algo)
 df_view = nom35_final.copy()
 
 if len(site_filter) > 0:
@@ -271,12 +295,17 @@ if df_view.empty:
     st.stop()
 
 # ------------------------------------------------------------
-# 8) Tablas
+# 9) Tablas
 # ------------------------------------------------------------
-(df_header, df_cat, df_dom, df_dist, df_demo_sexo, df_demo_edad, df_demo_antiguedad) = build_site_report_tables(
-    df_view,
-    site_name = None
-)
+(
+    df_header,
+    df_cat,
+    df_dom,
+    df_dist,
+    df_demo_sexo,
+    df_demo_edad,
+    df_demo_antiguedad
+) = build_site_report_tables(df_view, site_name = None)
 
 st.subheader('Resultados')
 
